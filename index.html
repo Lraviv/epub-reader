@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="he" dir="rtl" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>קורא EPUB</title>
+<link rel="icon" type="image/png" href="icons/icon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-256.png">
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root {
+    --bg: #fbf8f3; --fg: #1f1d1a; --muted: #6f6a62; --panel: #f2ede4;
+    --border: #e2dbcf; --accent: #2f6f5e; --accent-fg: #fff; --hover: rgba(0,0,0,.06);
+  }
+  [data-theme="sepia"] {
+    --bg: #f4ecd8; --fg: #3b2f22; --muted: #7a6a55; --panel: #eadfc6;
+    --border: #d9cbac; --accent: #8a5a2b; --accent-fg: #fff; --hover: rgba(60,40,10,.08);
+  }
+  [data-theme="dark"] {
+    --bg: #1b1a18; --fg: #e6e1d8; --muted: #9a948a; --panel: #242320;
+    --border: #34322e; --accent: #7cc4ad; --accent-fg: #102019; --hover: rgba(255,255,255,.07);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", "Assistant", Arial, sans-serif; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+
+  header { display: flex; align-items: center; gap: 4px; padding: 8px 12px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+  header .title { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; padding-inline: 6px; }
+  button { font: inherit; color: var(--fg); background: transparent; border: 1px solid transparent;
+    border-radius: 8px; padding: 6px 10px; cursor: pointer; min-height: 36px; }
+  button:hover { background: var(--hover); }
+  button.primary { background: var(--accent); color: var(--accent-fg); }
+  button.primary:hover { filter: brightness(1.08); }
+  button.outline { border-color: var(--border); }
+  button[disabled] { opacity: .4; cursor: default; }
+  .reader-only { display: none; }
+  body.reading .reader-only { display: inline-flex; align-items: center; }
+
+  main { flex: 1; position: relative; min-height: 0; display: flex; }
+  #viewer { flex: 1; height: 100%; }
+  .nav-zone { position: absolute; top: 0; bottom: 0; width: 56px; display: none;
+    align-items: center; justify-content: center; font-size: 28px; color: var(--muted);
+    border: 0; border-radius: 0; z-index: 2; }
+  body.reading .nav-zone { display: flex; }
+  #zoneLeft { left: 0; } #zoneRight { right: 0; }
+
+  #toc { position: absolute; inset-block: 0; inset-inline-start: 0; width: min(320px, 85vw);
+    background: var(--panel); border-inline-end: 1px solid var(--border); overflow-y: auto;
+    transform: translateX(100%); transition: transform .2s ease; z-index: 5; padding: 8px 0; }
+  #toc.open { transform: none; }
+  #toc a { display: block; padding: 8px 16px; color: var(--fg); text-decoration: none; line-height: 1.4; }
+  #toc a:hover { background: var(--hover); }
+  #toc a.sub { padding-inline-start: 32px; font-size: .92em; color: var(--muted); }
+
+  footer { display: flex; justify-content: space-between; gap: 12px; padding: 6px 14px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    font-size: 13px; color: var(--muted); border-top: 1px solid var(--border); }
+  body:not(.reading) footer { display: none; }
+
+  #welcome { position: absolute; inset: 0; overflow-y: auto; display: flex; justify-content: center; padding: 40px 16px; }
+  body.reading #welcome { display: none; }
+  .card { width: 100%; max-width: 520px; }
+  .card h1 { font-size: 26px; margin: 0 0 6px; }
+  .card p { color: var(--muted); line-height: 1.6; margin: 0 0 20px; }
+  .actions { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
+  .actions button { padding: 12px; font-size: 16px; }
+  #recent h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+  #recent ul { list-style: none; margin: 0; padding: 0; }
+  #recent li button { width: 100%; text-align: start; display: flex; justify-content: space-between;
+    gap: 12px; border-bottom: 1px solid var(--border); border-radius: 0; padding: 12px 6px; }
+  #recent li span.pct { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+
+  #status { position: fixed; bottom: 24px; inset-inline: 0; margin: auto; width: fit-content;
+    max-width: 90vw; background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+    font-size: 14px; display: none; z-index: 10; }
+  #status.show { display: block; }
+  .error-box { color: #b3261e; }
+</style>
+</head>
+<body>
+<header>
+  <button id="btnToc" class="reader-only" title="תוכן עניינים">☰</button>
+  <button id="btnHome" class="reader-only" title="ספרייה">⌂</button>
+  <div class="title" id="bookTitle">קורא EPUB</div>
+  <button id="btnFontDown" class="reader-only" title="הקטנת גופן">א−</button>
+  <button id="btnFontUp" class="reader-only" title="הגדלת גופן">א+</button>
+  <button id="btnDir" class="reader-only" title="כיוון קריאה">↔ אוטו</button>
+  <button id="btnTheme" title="ערכת צבעים">◐</button>
+</header>
+
+<main>
+  <nav id="toc" aria-label="תוכן עניינים"></nav>
+  <button class="nav-zone" id="zoneLeft" aria-label="עמוד שמאלי">‹</button>
+  <div id="viewer"></div>
+  <button class="nav-zone" id="zoneRight" aria-label="עמוד ימני">›</button>
+
+  <section id="welcome">
+    <div class="card">
+      <h1>קורא EPUB ל-Google Drive</h1>
+      <p id="welcomeText">פותחים ספר מה-Drive (או בקליק ימני ← "פתיחה באמצעות"), והמיקום נשמר ומסתנכרן בין המכשירים.</p>
+      <div class="actions">
+        <button id="btnOpenFromState" class="primary" hidden>פתיחת הספר מ-Drive</button>
+        <button id="btnPicker" class="primary">בחירת ספר מ-Google Drive</button>
+        <button id="btnLocal" class="outline">פתיחת קובץ מהמכשיר</button>
+        <input type="file" id="fileInput" accept=".epub,application/epub+zip" hidden>
+      </div>
+      <div id="recent"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span id="chapterLabel"></span>
+  <span id="pctLabel"></span>
+</footer>
+<div id="status" role="status"></div>
+
+<script>
+/* ============ הגדרות: למלא מתוך Google Cloud Console ============ */
+const CONFIG = {
+  CLIENT_ID: 'YOUR_CLIENT_ID.apps.googleusercontent.com', // OAuth Client ID (Web)
+  API_KEY:   'YOUR_API_KEY',                               // API key (לשימוש ה-Picker)
+  APP_ID:    'YOUR_PROJECT_NUMBER',                        // מספר הפרויקט (Project number)
+};
+/* ================================================================== */
+
+const SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',    // גישה רק לקבצים שנפתחו דרך האפליקציה
+  'https://www.googleapis.com/auth/drive.appdata', // שמירת מיקום קריאה בתיקייה מוסתרת של האפליקציה
+  'https://www.googleapis.com/auth/drive.install', // הופעה בתפריט "פתיחה באמצעות"
+].join(' ');
+const DRIVE = 'https://www.googleapis.com/drive/v3';
+const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, fallback) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+let prefs = Object.assign({ theme: 'light', font: 100, dir: 'auto' }, store.get('epubPrefs', {}));
+let progress = store.get('epubProgress', {});   // { key: { cfi, t, title, pct } }
+let token = null, tokenExp = 0, tokenClient = null, userHint;
+let progressFileId = null, remoteLoaded = false, saveTimer = null;
+let book = null, rendition = null, currentKey = null, currentTitle = '', bookDir = 'ltr';
+
+/* ---------- UI helpers ---------- */
+let statusTimer;
+function status(msg, ms = 2500, isError = false) {
+  const el = $('status');
+  el.textContent = msg; el.classList.toggle('error-box', isError); el.classList.add('show');
+  clearTimeout(statusTimer);
+  if (ms) statusTimer = setTimeout(() => el.classList.remove('show'), ms);
+}
+function hideStatus() { $('status').classList.remove('show'); }
+function applyChromeTheme() { document.documentElement.dataset.theme = prefs.theme; }
+function savePrefs() { store.set('epubPrefs', prefs); }
+function effectiveDir() { return prefs.dir === 'auto' ? bookDir : prefs.dir; }
+function dirLabel() { return { auto: '↔ אוטו', rtl: '← ימין לשמאל', ltr: '→ שמאל לימין' }[prefs.dir]; }
+
+/* ---------- Google auth ---------- */
+function waitFor(test, timeout = 15000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    (function poll() {
+      if (test()) return resolve();
+      if (Date.now() - start > timeout) return reject(new Error('טעינת ספריית Google נכשלה'));
+      setTimeout(poll, 100);
+    })();
+  });
+}
+async function ensureToken() {
+  if (token && Date.now() < tokenExp) return token;
+  if (CONFIG.CLIENT_ID.startsWith('YOUR_')) throw new Error('צריך למלא CLIENT_ID בקובץ index.html');
+  await waitFor(() => window.google?.accounts?.oauth2);
+  return new Promise((resolve, reject) => {
+    if (!tokenClient) {
+      tokenClient = google.accounts.oauth2.initTokenClient({ client_id: CONFIG.CLIENT_ID, scope: SCOPES, callback: () => {} });
+    }
+    tokenClient.callback = (r) => {
+      if (r.error) return reject(new Error(r.error_description || r.error));
+      token = r.access_token;
+      tokenExp = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000;
+      resolve(token);
+    };
+    tokenClient.error_callback = (e) => reject(new Error(e?.message || 'ההתחברות בוטלה'));
+    tokenClient.requestAccessToken({ prompt: '', login_hint: userHint });
+  });
+}
+async function driveFetch(url, opts = {}, retry = true) {
+  await ensureToken();
+  const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` } });
+  if (res.status === 401 && retry) { token = null; return driveFetch(url, opts, false); }
+  if (!res.ok) {
+    let msg = `שגיאת Drive (${res.status})`;
+    try { msg = (await res.json()).error?.message || msg; } catch {}
+    throw new Error(msg);
+  }
+  return res;
+}
+
+/* ---------- Reading progress (local + Drive appDataFolder) ---------- */
+function mergeProgress(remote) {
+  for (const [k, v] of Object.entries(remote || {})) {
+    if (!progress[k] || (v.t || 0) > (progress[k].t || 0)) progress[k] = v;
+  }
+  store.set('epubProgress', progress);
+}
+async function loadRemoteProgress() {
+  if (remoteLoaded) return;
+  try {
+    const q = encodeURIComponent("name='progress.json'");
+    const list = await (await driveFetch(`${DRIVE}/files?spaces=appDataFolder&q=${q}&fields=files(id)`)).json();
+    if (list.files?.length) {
+      progressFileId = list.files[0].id;
+      mergeProgress(await (await driveFetch(`${DRIVE}/files/${progressFileId}?alt=media`)).json());
+    }
+    remoteLoaded = true;
+  } catch (e) { console.warn('progress load failed', e); }
+}
+async function saveRemoteProgress() {
+  if (!token || !remoteLoaded) return;
+  const driveOnly = Object.fromEntries(Object.entries(progress).filter(([k]) => !k.startsWith('local:')));
+  const form = new FormData();
+  const meta = progressFileId ? {} : { name: 'progress.json', parents: ['appDataFolder'] };
+  form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+  form.append('file', new Blob([JSON.stringify(driveOnly)], { type: 'application/json' }));
+  try {
+    const url = progressFileId
+      ? `${UPLOAD}/files/${progressFileId}?uploadType=multipart`
+      : `${UPLOAD}/files?uploadType=multipart&fields=id`;
+    const res = await driveFetch(url, { method: progressFileId ? 'PATCH' : 'POST', body: form });
+    if (!progressFileId) progressFileId = (await res.json()).id;
+  } catch (e) { console.warn('progress save failed', e); }
+}
+function recordLocation(loc) {
+  if (!currentKey || !loc?.start) return;
+  const pct = book.locations?.length() ? Math.round(book.locations.percentageFromCfi(loc.start.cfi) * 100) : progress[currentKey]?.pct;
+  progress[currentKey] = { cfi: loc.start.cfi, t: Date.now(), title: currentTitle, pct };
+  store.set('epubProgress', progress);
+  if (!currentKey.startsWith('local:')) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveRemoteProgress, 4000);
+  }
+}
+window.addEventListener('pagehide', () => { if (saveTimer) { clearTimeout(saveTimer); saveRemoteProgress(); } });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveRemoteProgress(); }
+});
+
+/* ---------- Book rendering ---------- */
+function detectDir() {
+  const meta = book.packaging?.metadata || {};
+  if (meta.direction === 'rtl' || meta.direction === 'ltr') return meta.direction;
+  return /^(he|iw|ar|fa|yi|ur)\b/i.test(meta.language || '') ? 'rtl' : 'ltr';
+}
+function registerThemes() {
+  rendition.themes.register('light', { body: { color: '#1f1d1a !important', background: '#fbf8f3 !important' } });
+  rendition.themes.register('sepia', { body: { color: '#3b2f22 !important', background: '#f4ecd8 !important' } });
+  rendition.themes.register('dark', {
+    body: { color: '#e6e1d8 !important', background: '#1b1a18 !important' },
+    'p, span, div, li, h1, h2, h3, h4, h5, h6, td, th': { color: 'inherit !important', background: 'transparent !important' },
+    a: { color: '#8ab4f8 !important' },
+  });
+}
+function applyReaderPrefs() {
+  if (!rendition) return;
+  rendition.themes.select(prefs.theme);
+  rendition.themes.fontSize(prefs.font + '%');
+}
+function createRendition() {
+  rendition = book.renderTo('viewer', {
+    width: '100%', height: '100%', flow: 'paginated', spread: 'auto',
+    defaultDirection: effectiveDir(), allowScriptedContent: false,
+  });
+  registerThemes();
+  applyReaderPrefs();
+  rendition.on('relocated', (loc) => { recordLocation(loc); updateFooter(loc); });
+  rendition.on('keyup', onKey);
+  rendition.on('touchstart', onTouchStart);
+  rendition.on('touchend', onTouchEnd);
+  rendition.on('click', () => $('toc').classList.remove('open'));
+}
+async function rerender() {
+  if (!book) return;
+  const cfi = rendition?.currentLocation()?.start?.cfi;
+  rendition?.destroy();
+  createRendition();
+  await rendition.display(cfi);
+}
+function buildToc() {
+  const nav = $('toc');
+  nav.innerHTML = '';
+  const add = (items, depth) => items.forEach((it) => {
+    const a = document.createElement('a');
+    a.href = '#'; a.textContent = (it.label || '').trim(); if (depth) a.className = 'sub';
+    a.onclick = (e) => { e.preventDefault(); rendition.display(it.href); nav.classList.remove('open'); };
+    nav.appendChild(a);
+    if (it.subitems?.length && depth < 2) add(it.subitems, depth + 1);
+  });
+  add(book.navigation?.toc || [], 0);
+  if (!nav.children.length) nav.innerHTML = '<p style="padding:16px;color:var(--muted)">אין תוכן עניינים בספר הזה</p>';
+}
+function updateFooter(loc) {
+  if (!loc?.start) return;
+  if (book.locations?.length()) {
+    $('pctLabel').textContent = Math.round(book.locations.percentageFromCfi(loc.start.cfi) * 100) + '%';
+  }
+  const item = book.navigation?.get?.(loc.start.href);
+  $('chapterLabel').textContent = item?.label?.trim() || '';
+}
+async function openBook(data, key, title) {
+  status('טוען ספר…', 0);
+  try {
+    if (rendition) rendition.destroy();
+    if (book) book.destroy();
+    $('viewer').innerHTML = '';
+    book = ePub(data);
+    await book.ready;
+    currentKey = key;
+    currentTitle = title || book.packaging?.metadata?.title || 'ספר';
+    bookDir = detectDir();
+    $('bookTitle').textContent = book.packaging?.metadata?.title || currentTitle;
+    document.title = $('bookTitle').textContent;
+    document.body.classList.add('reading');
+    createRendition();
+    buildToc();
+    const saved = progress[key]?.cfi;
+    try { await rendition.display(saved || undefined); }
+    catch { await rendition.display(); }
+    hideStatus();
+    book.locations.generate(1600).then(() => updateFooter(rendition.currentLocation()));
+  } catch (e) {
+    console.error(e);
+    document.body.classList.remove('reading');
+    status('לא הצלחתי לפתוח את הספר: ' + e.message, 6000, true);
+  }
+}
+
+/* ---------- Navigation ---------- */
+function goLeft()  { effectiveDir() === 'rtl' ? rendition?.next() : rendition?.prev(); }
+function goRight() { effectiveDir() === 'rtl' ? rendition?.prev() : rendition?.next(); }
+function onKey(e) {
+  if (!rendition) return;
+  if (e.key === 'ArrowLeft') goLeft();
+  else if (e.key === 'ArrowRight') goRight();
+  else if (e.key === 'PageDown' || e.key === ' ') rendition.next();
+  else if (e.key === 'PageUp') rendition.prev();
+}
+document.addEventListener('keyup', onKey);
+let touchX = null, touchY = null;
+function onTouchStart(e) { const t = e.changedTouches?.[0]; if (t) { touchX = t.screenX; touchY = t.screenY; } }
+function onTouchEnd(e) {
+  const t = e.changedTouches?.[0]; if (!t || touchX === null) return;
+  const dx = t.screenX - touchX, dy = t.screenY - touchY;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) dx < 0 ? goRight() : goLeft();
+  touchX = null;
+}
+$('zoneLeft').onclick = goLeft;
+$('zoneRight').onclick = goRight;
+
+/* ---------- Toolbar ---------- */
+$('btnToc').onclick = () => $('toc').classList.toggle('open');
+$('btnHome').onclick = () => {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveRemoteProgress(); }
+  rendition?.destroy(); book?.destroy(); rendition = book = null; currentKey = null;
+  $('viewer').innerHTML = ''; $('toc').classList.remove('open');
+  document.body.classList.remove('reading');
+  $('bookTitle').textContent = 'קורא EPUB'; document.title = 'קורא EPUB';
+  renderRecent();
+};
+$('btnFontUp').onclick = () => { prefs.font = Math.min(200, prefs.font + 10); savePrefs(); applyReaderPrefs(); };
+$('btnFontDown').onclick = () => { prefs.font = Math.max(60, prefs.font - 10); savePrefs(); applyReaderPrefs(); };
+$('btnTheme').onclick = () => {
+  const order = ['light', 'sepia', 'dark'];
+  prefs.theme = order[(order.indexOf(prefs.theme) + 1) % order.length];
+  savePrefs(); applyChromeTheme(); applyReaderPrefs();
+};
+$('btnDir').onclick = async () => {
+  const order = ['auto', 'rtl', 'ltr'];
+  prefs.dir = order[(order.indexOf(prefs.dir) + 1) % order.length];
+  savePrefs(); $('btnDir').textContent = dirLabel();
+  await rerender();
+};
+
+/* ---------- Opening sources ---------- */
+async function openDriveFile(id) {
+  try {
+    status('מתחבר ל-Drive…', 0);
+    await ensureToken();
+    await loadRemoteProgress();
+    status('מוריד את הספר…', 0);
+    const meta = await (await driveFetch(`${DRIVE}/files/${id}?fields=name,mimeType&supportsAllDrives=true`)).json();
+    const buf = await (await driveFetch(`${DRIVE}/files/${id}?alt=media&supportsAllDrives=true`)).arrayBuffer();
+    await openBook(buf, id, meta.name.replace(/\.epub$/i, ''));
+  } catch (e) {
+    console.error(e);
+    status(e.message, 7000, true);
+  }
+}
+function loadPickerApi() {
+  return new Promise((resolve, reject) => {
+    if (window.google?.picker) return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://apis.google.com/js/api.js';
+    s.onload = () => gapi.load('picker', { callback: resolve, onerror: reject });
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+$('btnPicker').onclick = async () => {
+  try {
+    await ensureToken();
+    await loadPickerApi();
+    loadRemoteProgress();
+    const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+      .setMimeTypes('application/epub+zip').setIncludeFolders(true).setMode(google.picker.DocsViewMode.LIST);
+    new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(token)
+      .setDeveloperKey(CONFIG.API_KEY)
+      .setAppId(CONFIG.APP_ID)
+      .setLocale('iw')
+      .setTitle('בחירת ספר EPUB')
+      .setCallback((d) => { if (d.action === google.picker.Action.PICKED) openDriveFile(d.docs[0].id); })
+      .build()
+      .setVisible(true);
+  } catch (e) { status(e.message, 7000, true); }
+};
+$('btnLocal').onclick = () => $('fileInput').click();
+$('fileInput').onchange = async (e) => {
+  const f = e.target.files?.[0]; if (!f) return;
+  await openBook(await f.arrayBuffer(), `local:${f.name}:${f.size}`, f.name.replace(/\.epub$/i, ''));
+  e.target.value = '';
+};
+
+/* ---------- Recent books ---------- */
+function renderRecent() {
+  const items = Object.entries(progress)
+    .filter(([k]) => !k.startsWith('local:'))
+    .sort((a, b) => (b[1].t || 0) - (a[1].t || 0)).slice(0, 10);
+  const box = $('recent');
+  if (!items.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<h2>המשך קריאה</h2><ul></ul>';
+  const ul = box.querySelector('ul');
+  for (const [id, v] of items) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    const name = document.createElement('span'); name.textContent = v.title || 'ספר';
+    const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = v.pct != null ? v.pct + '%' : '';
+    b.append(name, pct);
+    b.onclick = () => openDriveFile(id);
+    li.appendChild(b); ul.appendChild(li);
+  }
+}
+
+/* ---------- Drive "Open with" entry ---------- */
+function handleDriveState() {
+  const raw = new URLSearchParams(location.search).get('state');
+  if (!raw) return;
+  try {
+    const st = JSON.parse(raw);
+    userHint = st.userId;
+    if (st.action === 'open' && st.ids?.length) {
+      const btn = $('btnOpenFromState');
+      btn.hidden = false;
+      $('welcomeText').textContent = 'נפתח מ-Google Drive. לחצי כדי להתחבר ולפתוח את הספר.';
+      btn.onclick = () => openDriveFile(st.ids[0]);
+      btn.focus();
+    }
+  } catch (e) { console.warn('bad state param', e); }
+}
+
+applyChromeTheme();
+$('btnDir').textContent = dirLabel();
+renderRecent();
+handleDriveState();
+</script>
+</body>
+</html>
